@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>ResearchPal — AI Paper Assistant</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --bg:#0d0f11;
+  --bg2:#13161a;
+  --bg3:#1a1e24;
+  --bg4:#20262e;
+  --border:#2a3040;
+  --border2:#3a4455;
+  --accent:#4f8ef7;
+  --accent2:#6ba3ff;
+  --accent-dim:rgba(79,142,247,0.12);
+  --accent-dim2:rgba(79,142,247,0.06);
+  --green:#3ecf8e;
+  --green-dim:rgba(62,207,142,0.12);
+  --amber:#f5a623;
+  --amber-dim:rgba(245,166,35,0.12);
+  --red:#e05c5c;
+  --text:#e8ecf0;
+  --text2:#8fa3b8;
+  --text3:#56697a;
+  --serif:'Instrument Serif',Georgia,serif;
+  --sans:'DM Sans',sans-serif;
+  --mono:'DM Mono',monospace;
+  --radius:12px;
+  --radius-lg:18px;
+  --radius-xl:24px;
+  --shadow:0 4px 24px rgba(0,0,0,0.4);
+  --shadow-lg:0 8px 48px rgba(0,0,0,0.6);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--text);font-size:15px;line-height:1.6;overflow:hidden}
+
+/* ── Layout ── */
+.shell{display:flex;height:100vh;overflow:hidden}
+.sidebar{width:300px;flex-shrink:0;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative}
+
+/* ── Sidebar ── */
+.sidebar-top{padding:24px 20px 18px;border-bottom:1px solid var(--border)}
+.logo{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+.logo-icon{width:36px;height:36px;background:var(--accent);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.logo-text{font-family:var(--serif);font-size:22px;color:var(--text);letter-spacing:-0.3px}
+.logo-text span{color:var(--accent2);font-style:italic}
+
+/* ── Upload zone ── */
+.upload-zone{border:1.5px dashed var(--border2);border-radius:var(--radius-lg);padding:22px 16px;text-align:center;cursor:pointer;transition:all .2s;position:relative;overflow:hidden}
+.upload-zone:hover{border-color:var(--accent);background:var(--accent-dim2)}
+.upload-zone.drag{border-color:var(--accent);background:var(--accent-dim)}
+.upload-zone input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.upload-icon{font-size:28px;margin-bottom:8px;display:block}
+.upload-title{font-size:13px;font-weight:500;color:var(--text);margin-bottom:4px}
+.upload-sub{font-size:11px;color:var(--text3)}
+
+/* ── Paper info card ── */
+.paper-card{margin:16px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:14px;display:none}
+.paper-card.visible{display:block}
+.paper-name{font-size:12px;font-weight:500;color:var(--text);line-height:1.4;margin-bottom:8px;word-break:break-word}
+.paper-meta{display:flex;gap:8px;flex-wrap:wrap}
+.meta-chip{font-size:10px;font-weight:500;padding:3px 8px;border-radius:20px;background:var(--bg4);color:var(--text2);border:1px solid var(--border)}
+.meta-chip.green{background:var(--green-dim);color:var(--green);border-color:rgba(62,207,142,0.3)}
+
+/* ── LR Table button ── */
+.lr-btn{margin:0 12px 12px;width:calc(100% - 24px);padding:12px;border:1px solid var(--border2);border-radius:var(--radius);background:var(--bg3);color:var(--text2);font-family:var(--sans);font-size:13px;font-weight:500;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:all .2s;display:none}
+.lr-btn.visible{display:flex}
+.lr-btn:hover{background:var(--bg4);border-color:var(--accent);color:var(--accent)}
+.lr-btn:disabled{opacity:0.5;cursor:not-allowed}
+
+/* ── Sidebar tips ── */
+.sidebar-tips{padding:12px 16px;margin-top:auto;border-top:1px solid var(--border)}
+.tip-label{font-size:10px;font-weight:500;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
+.tip{font-size:11px;color:var(--text3);line-height:1.6;margin-bottom:4px}
+.tip strong{color:var(--text2)}
+
+/* ── Chat area ── */
+.chat-header{padding:16px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;background:var(--bg2);flex-shrink:0}
+.chat-header-title{font-family:var(--serif);font-size:20px;color:var(--text)}
+.chat-header-title span{color:var(--accent2);font-style:italic}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--text3)}
+.status-dot.ready{background:var(--green);box-shadow:0 0 6px var(--green)}
+
+.messages{flex:1;overflow-y:auto;padding:24px;display:flex;flex-direction:column;gap:18px;scroll-behavior:smooth}
+.messages::-webkit-scrollbar{width:4px}
+.messages::-webkit-scrollbar-track{background:transparent}
+.messages::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
+
+/* ── Message bubbles ── */
+.msg{display:flex;gap:12px;animation:fadeUp .25s ease}
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.msg.user{flex-direction:row-reverse}
+.msg-avatar{width:34px;height:34px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:600}
+.msg.ai .msg-avatar{background:var(--accent-dim);color:var(--accent)}
+.msg.user .msg-avatar{background:var(--bg4);color:var(--text2)}
+.msg-body{max-width:72%}
+.msg-text{padding:13px 16px;border-radius:14px;font-size:14px;line-height:1.75}
+.msg.ai .msg-text{background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px 14px 14px 14px}
+.msg.user .msg-text{background:var(--accent);color:#fff;border-radius:14px 4px 14px 14px}
+.msg-sources{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}
+.source-tag{font-size:11px;padding:3px 9px;border-radius:20px;background:var(--bg4);color:var(--text3);border:1px solid var(--border);cursor:default;font-family:var(--mono)}
+
+/* ── Typing indicator ── */
+.typing-msg .msg-text{display:flex;align-items:center;gap:5px;min-width:56px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--text3);animation:bounce 1.2s infinite}
+.dot:nth-child(2){animation-delay:.2s}
+.dot:nth-child(3){animation-delay:.4s}
+@keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-6px)}}
+
+/* ── Empty state ── */
+.empty-state{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:40px;text-align:center}
+.empty-icon{font-size:52px;opacity:.4}
+.empty-title{font-family:var(--serif);font-size:28px;color:var(--text);opacity:.7;font-style:italic}
+.empty-sub{font-size:13px;color:var(--text3);max-width:320px;line-height:1.7}
+.empty-arrows{font-size:20px;color:var(--text3);margin-top:8px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:.4}50%{opacity:.9}}
+
+/* ── Input area ── */
+.input-area{padding:16px 24px;border-top:1px solid var(--border);background:var(--bg2);flex-shrink:0}
+.input-row{display:flex;gap:10px;align-items:flex-end}
+.input-wrap{flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);display:flex;align-items:flex-end;gap:8px;padding:10px 14px;transition:border-color .2s}
+.input-wrap:focus-within{border-color:var(--accent)}
+textarea{flex:1;background:transparent;border:none;outline:none;color:var(--text);font-family:var(--sans);font-size:14px;resize:none;min-height:22px;max-height:120px;line-height:1.6}
+textarea::placeholder{color:var(--text3)}
+.send-btn{width:40px;height:40px;border-radius:10px;background:var(--accent);border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;flex-shrink:0;font-size:16px}
+.send-btn:hover{background:var(--accent2);transform:scale(1.05)}
+.send-btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+
+/* ── LR Table Modal ── */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);z-index:1000;display:none;align-items:flex-start;justify-content:center;padding:24px;overflow-y:auto}
+.modal-overlay.open{display:flex}
+.modal{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-xl);width:100%;max-width:1100px;margin:auto;box-shadow:var(--shadow-lg);animation:modalIn .25s ease}
+@keyframes modalIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
+.modal-header{padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.modal-title{font-family:var(--serif);font-size:22px;color:var(--text)}
+.modal-title span{color:var(--accent2);font-style:italic}
+.modal-close{width:32px;height:32px;border-radius:8px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;transition:all .15s}
+.modal-close:hover{background:var(--bg4);color:var(--text)}
+.modal-body{padding:24px;overflow-x:auto}
+.modal-loading{padding:48px;text-align:center;color:var(--text2)}
+.spinner{width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── LR Table layout ── */
+.lr-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.lr-grid.full{grid-template-columns:1fr}
+.lr-card{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+.lr-label{font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);margin-bottom:6px}
+.lr-value{font-size:13.5px;color:var(--text);line-height:1.65}
+.lr-value.title{font-family:var(--serif);font-size:17px;font-style:italic;color:var(--accent2)}
+.lr-steps{list-style:none;display:flex;flex-direction:column;gap:6px}
+.lr-steps li{font-size:13px;color:var(--text);line-height:1.6;padding-left:20px;position:relative}
+.lr-steps li::before{content:counter(step);counter-increment:step;position:absolute;left:0;width:16px;height:16px;background:var(--accent-dim);color:var(--accent);border-radius:4px;font-size:10px;font-weight:600;display:flex;align-items:center;justify-content:center;top:2px}
+.lr-steps{counter-reset:step}
+
+.modal-export{padding:16px 24px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end}
+.export-btn{padding:9px 18px;border-radius:var(--radius);font-family:var(--sans);font-size:13px;font-weight:500;cursor:pointer;border:1px solid var(--border2);background:var(--bg3);color:var(--text2);transition:all .15s}
+.export-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-dim2)}
+
+/* ── Progress bar ── */
+.progress-wrap{height:3px;background:var(--bg4);border-radius:2px;overflow:hidden;margin:10px 0 0;display:none}
+.progress-wrap.show{display:block}
+.progress-bar{height:100%;background:var(--accent);border-radius:2px;transition:width .4s;width:0%}
+
+/* ── Toasts ── */
+.toasts{position:fixed;bottom:24px;right:24px;z-index:2000;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast{padding:12px 16px;border-radius:var(--radius);font-size:13px;font-weight:500;color:#fff;pointer-events:all;animation:toastIn .2s ease;display:flex;align-items:center;gap:8px;box-shadow:var(--shadow)}
+@keyframes toastIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.toast.success{background:#1a3d2e;border:1px solid var(--green);color:var(--green)}
+.toast.error{background:#3d1a1a;border:1px solid var(--red);color:var(--red)}
+.toast.info{background:#1a2a3d;border:1px solid var(--accent);color:var(--accent2)}
+
+/* ── Scrollbar global ── */
+*::-webkit-scrollbar{width:5px;height:5px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+
+/* ── Responsive ── */
+@media(max-width:768px){
+  .sidebar{width:260px}
+  .msg-body{max-width:88%}
+  .lr-grid{grid-template-columns:1fr}
+  .modal{margin:12px}
+}
+@media(max-width:600px){
+  .shell{flex-direction:column}
+  .sidebar{width:100%;height:auto;max-height:220px;border-right:none;border-bottom:1px solid var(--border)}
+  .main{flex:1}
+}
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+  <!-- ══ SIDEBAR ══════════════════════════════════════════════ -->
+  <aside class="sidebar">
+    <div class="sidebar-top">
+      <div class="logo">
+        <div class="logo-icon">📄</div>
+        <div class="logo-text">Research<span>Pal</span></div>
+      </div>
+
+      <div class="upload-zone" id="uploadZone">
+        <input type="file" id="fileInput" accept=".pdf"/>
+        <span class="upload-icon">☁</span>
+        <div class="upload-title">Upload Research Paper</div>
+        <div class="upload-sub">PDF only · drag & drop or click</div>
+      </div>
+
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
+    </div>
+
+    <div class="paper-card" id="paperCard">
+      <div class="paper-name" id="paperName">—</div>
+      <div class="paper-meta">
+        <span class="meta-chip green" id="pagesChip">— pages</span>
+        <span class="meta-chip green" id="chunksChip">— chunks</span>
+        <span class="meta-chip" id="readyChip">Ready ✓</span>
+      </div>
+    </div>
+
+    <button class="lr-btn" id="lrBtn" disabled>
+      <span>📊</span> Generate LR Table
+    </button>
+
+    <div class="sidebar-tips">
+      <div class="tip-label">Tips</div>
+      <div class="tip"><strong>Upload</strong> a research paper PDF</div>
+      <div class="tip"><strong>Ask</strong> anything about the paper</div>
+      <div class="tip"><strong>LR Table</strong> extracts structured metadata</div>
+      <div class="tip"><strong>Export</strong> the table as CSV or JSON</div>
+    </div>
+  </aside>
+
+  <!-- ══ MAIN ════════════════════════════════════════════════ -->
+  <main class="main">
+    <div class="chat-header">
+      <div class="status-dot" id="statusDot"></div>
+      <div class="chat-header-title">Research<span>Pal</span></div>
+    </div>
+
+    <!-- Empty state -->
+    <div class="empty-state" id="emptyState">
+      <div class="empty-icon">📚</div>
+      <div class="empty-title">Upload a paper to begin</div>
+      <div class="empty-sub">Upload any research paper PDF and I'll answer your questions, explain methodology, summarize findings, and extract structured metadata.</div>
+      <div class="empty-arrows">← Upload here</div>
+    </div>
+
+    <!-- Messages -->
+    <div class="messages" id="messages" style="display:none"></div>
+
+    <!-- Input -->
+    <div class="input-area" id="inputArea" style="display:none">
+      <div class="input-row">
+        <div class="input-wrap">
+          <textarea id="msgInput" placeholder="Ask anything about the paper..." rows="1"></textarea>
+        </div>
+        <button class="send-btn" id="sendBtn" title="Send">➤</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- ══ LR TABLE MODAL ══════════════════════════════════════════ -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Literature Review <span>Table</span></div>
+      <button class="modal-close" id="modalClose">✕</button>
+    </div>
+    <div class="modal-body" id="modalBody">
+      <div class="modal-loading">
+        <div class="spinner"></div>
+        Analyzing paper and extracting fields…<br/>
+        <small style="color:var(--text3);font-size:12px;margin-top:8px;display:block">This may take 30–60 seconds</small>
+      </div>
+    </div>
+    <div class="modal-export" id="modalExport" style="display:none">
+      <button class="export-btn" onclick="exportExcel()">⬇ Export Excel (.xlsx)</button>
+      <button class="export-btn" onclick="exportJSON()">⬇ Export JSON</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ TOASTS ══════════════════════════════════════════════════ -->
+<div class="toasts" id="toasts"></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────
+let sessionId = null;
+let isLoading = false;
+let lrData = null;
+
+// ── Upload ─────────────────────────────────────────────────
+const fileInput = document.getElementById('fileInput');
+const uploadZone = document.getElementById('uploadZone');
+
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault(); uploadZone.classList.remove('drag');
+  const file = e.dataTransfer.files[0];
+  if (file && file.name.endsWith('.pdf')) handleUpload(file);
+  else toast('Only PDF files are accepted.', 'error');
+});
+fileInput.addEventListener('change', e => {
+  if (e.target.files[0]) handleUpload(e.target.files[0]);
+});
+
+async function handleUpload(file) {
+  showProgress(10);
+  toast('Uploading and indexing paper…', 'info');
+
+  const form = new FormData();
+  form.append('file', file);
+
+  showProgress(30);
+  try {
+    const res = await fetch('/upload', { method: 'POST', body: form });
+    showProgress(80);
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+
+    sessionId = data.session_id;
+    showProgress(100);
+    setTimeout(() => hideProgress(), 600);
+
+    // Update sidebar
+    document.getElementById('paperName').textContent = data.filename;
+    document.getElementById('pagesChip').textContent = data.pages + ' pages';
+    document.getElementById('chunksChip').textContent = data.chunks + ' chunks';
+    document.getElementById('paperCard').classList.add('visible');
+    document.getElementById('lrBtn').classList.add('visible');
+    document.getElementById('lrBtn').disabled = false;
+    document.getElementById('statusDot').classList.add('ready');
+
+    // Switch to chat view
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('messages').style.display = 'flex';
+    document.getElementById('inputArea').style.display = 'block';
+
+    // Clear old messages
+    document.getElementById('messages').innerHTML = '';
+
+    // Greet
+    appendMsg('ai', `📄 **${data.filename}** is ready!\n\nI've indexed **${data.pages} pages** into **${data.chunks} semantic chunks**. Ask me anything about this paper — methodology, findings, limitations, or click **Generate LR Table** for structured metadata extraction.`);
+    toast('Paper indexed successfully!', 'success');
+  } catch (err) {
+    hideProgress();
+    toast('Upload failed: ' + err.message, 'error');
+  }
+}
+
+function showProgress(pct) {
+  document.getElementById('progressWrap').classList.add('show');
+  document.getElementById('progressBar').style.width = pct + '%';
+}
+function hideProgress() {
+  document.getElementById('progressWrap').classList.remove('show');
+  document.getElementById('progressBar').style.width = '0%';
+}
+
+// ── Chat ───────────────────────────────────────────────────
+const msgInput = document.getElementById('msgInput');
+const sendBtn = document.getElementById('sendBtn');
+
+msgInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+msgInput.addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+});
+sendBtn.addEventListener('click', sendMessage);
+
+async function sendMessage() {
+  const text = msgInput.value.trim();
+  if (!text || isLoading || !sessionId) return;
+
+  appendMsg('user', text);
+  msgInput.value = '';
+  msgInput.style.height = 'auto';
+  isLoading = true;
+  sendBtn.disabled = true;
+
+  const typingId = appendTyping();
+
+  try {
+    const res = await fetch('/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId, message: text })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    removeTyping(typingId);
+    appendMsg('ai', data.answer, data.sources);
+  } catch (err) {
+    removeTyping(typingId);
+    const errText = err.message || '';
+    if (errText.includes('503') || errText.includes('high demand') || errText.includes('temporarily')) {
+      appendMsg('ai', '⏳ **Gemini is momentarily overloaded** (this happens sometimes). The code will retry automatically — or just send your message again in a few seconds.');
+    } else if (errText.includes('429') || errText.includes('rate')) {
+      appendMsg('ai', '⏱️ **Rate limit hit.** Please wait about 30 seconds and ask again.');
+    } else {
+      appendMsg('ai', '⚠️ ' + errText);
+    }
+  } finally {
+    isLoading = false;
+    sendBtn.disabled = false;
+    msgInput.focus();
+  }
+}
+
+function appendMsg(role, text, sources = []) {
+  const msgs = document.getElementById('messages');
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  const avatar = role === 'ai' ? '🤖' : '👤';
+
+  const formatted = text
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/\n/g, '<br/>');
+
+  let sourcesHTML = '';
+  if (sources.length) {
+    sourcesHTML = '<div class="msg-sources">' +
+      sources.map(s => `<span class="source-tag" title="${escHtml(s.snippet)}">p.${s.page}</span>`).join('') +
+      '</div>';
+  }
+
+  div.innerHTML = `
+    <div class="msg-avatar">${avatar}</div>
+    <div class="msg-body">
+      <div class="msg-text">${formatted}</div>
+      ${sourcesHTML}
+    </div>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  return div;
+}
+
+function appendTyping() {
+  const msgs = document.getElementById('messages');
+  const div = document.createElement('div');
+  const id = 'typing-' + Date.now();
+  div.id = id;
+  div.className = 'msg ai typing-msg';
+  div.innerHTML = `
+    <div class="msg-avatar">🤖</div>
+    <div class="msg-body">
+      <div class="msg-text">
+        <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+      </div>
+    </div>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  return id;
+}
+
+function removeTyping(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── LR Table ───────────────────────────────────────────────
+document.getElementById('lrBtn').addEventListener('click', openLRModal);
+document.getElementById('modalClose').addEventListener('click', () => {
+  document.getElementById('modalOverlay').classList.remove('open');
+});
+document.getElementById('modalOverlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('modalOverlay'))
+    document.getElementById('modalOverlay').classList.remove('open');
+});
+
+async function openLRModal() {
+  if (!sessionId) return;
+  lrData = null;
+  document.getElementById('modalBody').innerHTML = `
+    <div class="modal-loading">
+      <div class="spinner"></div>
+      Analyzing paper and extracting fields…<br/>
+      <small style="color:var(--text3);font-size:12px;margin-top:8px;display:block">This may take 30–60 seconds with local LLM</small>
+    </div>`;
+  document.getElementById('modalExport').style.display = 'none';
+  document.getElementById('modalOverlay').classList.add('open');
+
+  try {
+    const res = await fetch('/lr-table', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    lrData = await res.json();
+    renderLRTable(lrData);
+    document.getElementById('modalExport').style.display = 'flex';
+  } catch (err) {
+    document.getElementById('modalBody').innerHTML = `
+      <div class="modal-loading" style="color:var(--red)">⚠️ ${err.message}</div>`;
+  }
+}
+
+function renderLRTable(d) {
+  const steps = Array.isArray(d.methodology)
+    ? d.methodology
+    : String(d.methodology).split(/[;|\n]/).filter(s => s.trim());
+
+  const stepsHTML = steps.map(s => `<li>${escHtml(s.trim())}</li>`).join('');
+
+  document.getElementById('modalBody').innerHTML = `
+    <div class="lr-grid full" style="margin-bottom:12px">
+      <div class="lr-card">
+        <div class="lr-label">Paper Title</div>
+        <div class="lr-value title">${escHtml(d.title || '—')}</div>
+      </div>
+    </div>
+    <div class="lr-grid" style="margin-bottom:12px">
+      <div class="lr-card">
+        <div class="lr-label">Authors</div>
+        <div class="lr-value">${escHtml(d.authors || '—')}</div>
+      </div>
+      <div class="lr-card">
+        <div class="lr-label">Year</div>
+        <div class="lr-value">${escHtml(d.year || '—')}</div>
+      </div>
+      <div class="lr-card">
+        <div class="lr-label">Journal / Conference</div>
+        <div class="lr-value">${escHtml(d.journal_conference || '—')}</div>
+      </div>
+      <div class="lr-card">
+        <div class="lr-label">Data Used</div>
+        <div class="lr-value">${escHtml(d.data_used || '—')}</div>
+      </div>
+    </div>
+    <div class="lr-grid" style="margin-bottom:12px">
+      <div class="lr-card">
+        <div class="lr-label">Objective</div>
+        <div class="lr-value">${escHtml(d.objective || '—')}</div>
+      </div>
+      <div class="lr-card">
+        <div class="lr-label">Model / Algorithm Used</div>
+        <div class="lr-value">${escHtml(d.model_used || '—')}</div>
+      </div>
+    </div>
+    <div class="lr-grid" style="margin-bottom:12px">
+      <div class="lr-card">
+        <div class="lr-label">Key Contributions</div>
+        <div class="lr-value">${escHtml(d.contributions || '—')}</div>
+      </div>
+      <div class="lr-card">
+        <div class="lr-label">Key Findings</div>
+        <div class="lr-value">${escHtml(d.key_findings || '—')}</div>
+      </div>
+    </div>
+    <div class="lr-grid full" style="margin-bottom:12px">
+      <div class="lr-card">
+        <div class="lr-label">Methodology (Step by Step)</div>
+        <ol class="lr-steps">${stepsHTML}</ol>
+      </div>
+    </div>
+    <div class="lr-grid" style="margin-bottom:12px">
+      <div class="lr-card">
+        <div class="lr-label">Strengths</div>
+        <div class="lr-value">${escHtml(d.strengths || '—')}</div>
+      </div>
+      <div class="lr-card">
+        <div class="lr-label">Limitations (by Authors)</div>
+        <div class="lr-value">${escHtml(d.limitations_self || '—')}</div>
+      </div>
+      <div class="lr-card">
+        <div class="lr-label">Limitations (LLM Analysis)</div>
+        <div class="lr-value">${escHtml(d.limitations_llm || '—')}</div>
+      </div>
+      <div class="lr-card">
+        <div class="lr-label">Future Work</div>
+        <div class="lr-value">${escHtml(d.future_work || '—')}</div>
+      </div>
+    </div>
+  `;
+}
+
+// ── Export ─────────────────────────────────────────────────
+// ── Export Excel ──────────────────────────────────────────
+function exportExcel() {
+  if (!lrData) return;
+
+  // Build a simple HTML table that Excel can open natively
+  // This creates a proper .xls file Excel opens perfectly
+  const methodology = Array.isArray(lrData.methodology)
+    ? lrData.methodology.join('\n')
+    : (lrData.methodology || '—');
+
+  const rows = [
+    ['Field', 'Content'],
+    ['Paper Title', lrData.title || '—'],
+    ['Authors', lrData.authors || '—'],
+    ['Year', lrData.year || '—'],
+    ['Journal / Conference', lrData.journal_conference || '—'],
+    ['Objective', lrData.objective || '—'],
+    ['Key Contributions', lrData.contributions || '—'],
+    ['Data Used', lrData.data_used || '—'],
+    ['Model / Algorithm Used', lrData.model_used || '—'],
+    ['Methodology (Step-by-Step)', methodology],
+    ['Key Findings', lrData.key_findings || '—'],
+    ['Strengths', lrData.strengths || '—'],
+    ['Limitations (Authors\')', lrData.limitations_self || '—'],
+    ['Limitations (LLM Analysis)', lrData.limitations_llm || '—'],
+    ['Future Work', lrData.future_work || '—'],
+  ];
+
+  // Build XML Spreadsheet (works in Excel 2007+, no library needed)
+  let xml = '<?xml version="1.0"?>\n';
+  xml += '<?mso-application progid="Excel.Sheet"?>\n';
+  xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"\n';
+  xml += ' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"\n';
+  xml += ' xmlns:x="urn:schemas-microsoft-com:office:excel">\n';
+  xml += '<Styles>\n';
+  xml += '<Style ss:ID="header"><Font ss:Bold="1" ss:Size="11" ss:Color="#FFFFFF"/>';
+  xml += '<Interior ss:Color="#1a3a6b" ss:Pattern="Solid"/>';
+  xml += '<Alignment ss:WrapText="1" ss:Vertical="Center"/></Style>\n';
+  xml += '<Style ss:ID="field"><Font ss:Bold="1" ss:Size="10"/>';
+  xml += '<Interior ss:Color="#E8EFF7" ss:Pattern="Solid"/>';
+  xml += '<Alignment ss:WrapText="1" ss:Vertical="Top"/></Style>\n';
+  xml += '<Style ss:ID="value"><Font ss:Size="10"/>';
+  xml += '<Alignment ss:WrapText="1" ss:Vertical="Top"/></Style>\n';
+  xml += '</Styles>\n';
+  xml += '<Worksheet ss:Name="LR Table">\n';
+  xml += '<Table ss:DefaultColumnWidth="200">\n';
+  xml += '<Column ss:Width="180"/>\n';   // Field column
+  xml += '<Column ss:Width="500"/>\n';   // Content column
+
+  rows.forEach((row, i) => {
+    const isHeader = i === 0;
+    xml += '<Row ss:AutoFitHeight="1">\n';
+    row.forEach((cell, j) => {
+      const styleId = isHeader ? 'header' : (j === 0 ? 'field' : 'value');
+      const safe = String(cell || '—')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+      xml += `<Cell ss:StyleID="${styleId}"><Data ss:Type="String">${safe}</Data></Cell>\n`;
+    });
+    xml += '</Row>\n';
+  });
+
+  xml += '</Table>\n</Worksheet>\n</Workbook>';
+
+  // Download as .xls (Excel opens XML Spreadsheet format perfectly)
+  const filename = (lrData.title || 'lr_table').slice(0, 50).replace(/[^a-z0-9]/gi, '_') + '_LR_Table.xls';
+  download(filename, xml, 'application/vnd.ms-excel');
+  toast('Excel file downloaded!', 'success');
+}
+
+function exportJSON() {
+  if (!lrData) return;
+  const filename = (lrData.title || 'lr_table').slice(0, 50).replace(/[^a-z0-9]/gi, '_') + '_LR_Table.json';
+  download(filename, JSON.stringify(lrData, null, 2), 'application/json');
+  toast('JSON exported!', 'success');
+}
+
+function download(name, content, type) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([content], { type }));
+  a.download = name;
+  a.click();
+}
+
+// ── Toasts ─────────────────────────────────────────────────
+function toast(msg, type = 'info', duration = 3500) {
+  const container = document.getElementById('toasts');
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  el.textContent = msg;
+  container.appendChild(el);
+  setTimeout(() => {
+    el.style.opacity = '0';
+    el.style.transform = 'translateY(8px)';
+    el.style.transition = 'all .2s';
+    setTimeout(() => el.remove(), 200);
+  }, duration);
+}
+</script>
+</body>
+</html>
