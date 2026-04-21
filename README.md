@@ -6,6 +6,15 @@
 
 *Upload any research paper and chat with it. Get instant answers, structured analysis, and exportable Literature Review tables — all for free.*
 
+[![Python](https://img.shields.io/badge/Python-3.11-blue?style=flat-square&logo=python)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com)
+[![Gemini](https://img.shields.io/badge/Gemini_2.5_Flash-Free_API-4285F4?style=flat-square&logo=google)](https://aistudio.google.com)
+[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+
+</div>
+
+---
+
 ## What is ResearchPal?
 
 ResearchPal is a web application that lets you upload any academic research paper (PDF) and interact with it through an AI-powered chatbot. Instead of reading through pages of dense academic text, you can simply ask questions and get precise, cited answers in seconds.
