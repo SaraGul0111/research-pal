@@ -158,44 +158,47 @@ CURRENT QUESTION: {question}
 
 ANSWER (structured, accurate, evidence-based):"""
 
-LR_EXTRACTION_PROMPT = """You are an elite academic literature analyst performing a systematic review extraction. Extract structured information from the research paper below.
+LR_EXTRACTION_PROMPT = """You are a senior academic researcher performing a literature review extraction. Read the full paper text carefully and extract ALL fields below. Every single field must be filled — do not skip any.
 
-PAPER CONTENT:
----
+PAPER TEXT:
 {paper_text}
----
 
-EXTRACTION RULES:
-- Be PRECISE — extract exactly what the paper states. Never invent.
-- If a field cannot be found: write "Not explicitly stated in the paper."
-- Methodology: 5-6 specific, sequential, action-oriented steps.
-- limitations_llm: Be a critical peer reviewer — find gaps AUTHORS did NOT mention: dataset biases, scalability, evaluation weaknesses, reproducibility, generalizability, missing baselines.
-- key_findings: Always include specific numbers/metrics where available.
-- Return ONLY a valid JSON object. NO markdown fences. NO explanation. Start with {{ end with }}.
+YOUR TASK:
+Read every section of the paper above — abstract, introduction, methods, results, discussion, conclusion, limitations — and extract information for every field. Do not say "not found" for fields that can be reasonably inferred from the paper.
 
-JSON TO RETURN:
+RULES:
+- Return ONLY a raw JSON object. No markdown. No ```json. No explanation. Just {{ and }}.
+- EVERY field must have real content extracted from the paper.
+- For model_used: look for CNN, transformer, ResNet, BERT, deep learning architecture names, loss functions, optimizers — any technical model detail.
+- For key_findings: look in Results and Discussion sections for AUC, accuracy, F1, precision, recall, p-values, percentages, comparisons to baselines.
+- For methodology: read the Methods section carefully and write 5 sequential steps of what the researchers actually did.
+- For strengths: think about what makes this paper valuable — large dataset, multi-center, clinical validation, novel approach, etc.
+- For limitations_self: read the Limitations or Discussion section for what authors say about their own weaknesses.
+- For limitations_llm: think critically as a peer reviewer — what did authors NOT mention? dataset bias, generalizability, class imbalance, lack of external validation, computational cost, etc.
+- For future_work: read the last paragraphs of Discussion/Conclusion.
+
+Return this JSON with ALL fields filled:
 {{
-  "title": "Complete exact paper title",
-  "authors": "Full names of all authors, comma-separated",
-  "year": "4-digit publication year",
-  "journal_conference": "Full name of journal or conference",
-  "objective": "1-2 sentence precise statement of what the paper does and its scientific significance",
-  "contributions": "3-5 numbered contributions, each a complete specific sentence. Format: 1. ... 2. ... 3. ...",
-  "data_used": "All datasets/corpora with scale if mentioned (e.g. ImageNet: 1.2M images)",
-  "model_used": "All models, algorithms, architectures, frameworks used",
+  "title": "exact full title of the paper",
+  "authors": "all authors comma separated",
+  "year": "publication year",
+  "journal_conference": "journal or conference name",
+  "objective": "2-3 sentences: what problem does this paper solve, what is the proposed solution, and why does it matter clinically or scientifically",
+  "contributions": "1. first contribution. 2. second contribution. 3. third contribution. 4. fourth if exists.",
+  "data_used": "all datasets with patient/sample counts if mentioned",
+  "model_used": "list every model, architecture, algorithm, framework mentioned: e.g. CNN, ResNet, attention mechanism, PyTorch, etc.",
   "methodology": [
-    "Step 1 — Data Collection/Preparation: specific description",
-    "Step 2 — Preprocessing/Feature Engineering: specific description",
-    "Step 3 — Model Design/Architecture: specific description",
-    "Step 4 — Training/Optimization: loss functions, optimizers, hyperparameters",
-    "Step 5 — Evaluation/Validation: metrics, benchmarks, comparisons",
-    "Step 6 — Analysis/Ablation: additional experiments or analysis"
+    "Step 1 — Data Collection: describe exactly what data was collected and from where",
+    "Step 2 — Preprocessing: describe how slides or data were preprocessed",
+    "Step 3 — Model Architecture: describe the deep learning or ML model architecture used",
+    "Step 4 — Training: describe training procedure, loss function, optimizer, validation strategy",
+    "Step 5 — Evaluation and Clinical Application: describe how the model was evaluated and applied clinically"
   ],
-  "key_findings": "3-5 most important results with specific numbers where available",
-  "strengths": "3-4 specific strengths with justification",
-  "limitations_self": "Limitations the AUTHORS explicitly acknowledged",
-  "limitations_llm": "YOUR critical expert analysis: 3-5 gaps AUTHORS did NOT mention",
-  "future_work": "Future directions authors suggested plus 2 extensions you identify"
+  "key_findings": "list 4-5 specific findings with numbers: AUC values, accuracy percentages, number of cases identified, comparison to baseline — use exact numbers from the paper",
+  "strengths": "1. Large and diverse multi-center dataset. 2. Clinical validation on real patients. 3. [add 2 more specific strengths from this paper]",
+  "limitations_self": "what the authors themselves said are limitations of their work in the limitations or discussion section",
+  "limitations_llm": "1. [limitation not mentioned by authors]. 2. [another limitation]. 3. [another]. 4. [another]. Think: generalizability, dataset bias, class imbalance, black-box nature, computational requirements, prospective validation missing, etc.",
+  "future_work": "what authors suggest for future work, plus 2 additional directions you suggest as a reviewer"
 }}"""
 
 
@@ -245,6 +248,71 @@ def clean_text(raw: str, max_chars: int = 35000) -> str:
     text = re.sub(r'\n{3,}', '\n\n', raw)
     text = re.sub(r'[ \t]{2,}', ' ', text)
     return text[:max_chars]
+
+def smart_paper_context(raw_text: str, max_chars: int = 40000) -> str:
+    """
+    Send the full paper text to Gemini.
+    If paper is very long, prioritize: abstract + intro + methods + results + discussion + conclusion.
+    This ensures key sections are always included even if paper is truncated.
+    """
+    text = re.sub(r'\n{3,}', '\n\n', raw_text)
+    text = re.sub(r'[ \t]{2,}', ' ', text)
+
+    if len(text) <= max_chars:
+        return text  # short paper — send everything
+
+    # Long paper — find key sections and prioritize them
+    text_lower = text.lower()
+    sections = {}
+    section_keywords = [
+        ('abstract', ['abstract']),
+        ('introduction', ['introduction', 'background']),
+        ('methods', ['method', 'material', 'approach', 'experiment']),
+        ('results', ['result', 'finding']),
+        ('discussion', ['discussion']),
+        ('conclusion', ['conclusion', 'summary']),
+        ('limitation', ['limitation']),
+    ]
+    for section_name, keywords in section_keywords:
+        for kw in keywords:
+            idx = text_lower.find(kw)
+            if idx != -1:
+                sections[section_name] = idx
+                break
+
+    if not sections:
+        # No sections found — just send first + last portions
+        half = max_chars // 2
+        return text[:half] + "\n\n[... middle section truncated ...]\n\n" + text[-half:]
+
+    # Build context by stitching important sections
+    sorted_sections = sorted(sections.items(), key=lambda x: x[1])
+    result_parts = []
+    chars_used = 0
+    budget = max_chars
+
+    for i, (name, start) in enumerate(sorted_sections):
+        # End of this section = start of next section (or end of text)
+        end = sorted_sections[i+1][1] if i+1 < len(sorted_sections) else len(text)
+        section_text = text[start:end].strip()
+
+        # Give more budget to methods, results, discussion
+        if name in ('methods', 'results', 'discussion', 'limitation'):
+            allowed = min(len(section_text), budget // 2)
+        else:
+            allowed = min(len(section_text), budget // 4)
+
+        if chars_used + allowed > budget:
+            allowed = budget - chars_used
+
+        if allowed > 100:
+            result_parts.append(f"[{name.upper()}]\n" + section_text[:allowed])
+            chars_used += allowed
+
+        if chars_used >= budget:
+            break
+
+    return "\n\n".join(result_parts)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -342,32 +410,164 @@ async def lr_table(req: LRRequest):
     if req.session_id not in SESSIONS:
         raise HTTPException(404, "Session not found.")
 
-    session = SESSIONS[req.session_id]
-    context = clean_text(session["raw_text"], max_chars=35000)
+    session  = SESSIONS[req.session_id]
+    raw_text = session["raw_text"]
+
+    # Smart context: send full paper but prioritize key sections
+    # Gemini 2.5 flash handles up to 1M tokens — send as much as possible
+    context = smart_paper_context(raw_text, max_chars=40000)
     prompt  = LR_EXTRACTION_PROMPT.format(paper_text=context)
 
-    raw_str = await asyncio.to_thread(call_gemini, prompt, 0.1, 3000)
+    # Use temperature 0 for maximum determinism and JSON compliance
+    raw_str = await asyncio.to_thread(call_gemini, prompt, 0.0, 4096)
 
-    try:
-        cleaned = re.sub(r"```(?:json)?\s*", "", raw_str).strip()
-        cleaned = re.sub(r"```\s*$", "", cleaned).strip()
-        match = re.search(r'\{[\s\S]+\}', cleaned)
-        if not match:
-            raise ValueError("No JSON object found in response")
-        data = json.loads(match.group())
-    except Exception as e:
-        data = {
-            "title": session["filename"].replace(".pdf", ""),
-            "authors": "Click Generate LR Table again to retry",
-            "year": "—", "journal_conference": "—",
-            "objective": f"Parsing error: {str(e)[:120]}",
-            "contributions": "—", "data_used": "—", "model_used": "—",
-            "methodology": ["Extraction failed. Please click Generate LR Table again."],
-            "key_findings": "—", "strengths": "—",
-            "limitations_self": "—", "limitations_llm": "—", "future_work": "—",
-        }
-
+    data = parse_lr_response(raw_str, session["filename"])
     return data
+
+
+def parse_lr_response(raw_str: str, filename: str) -> dict:
+    """
+    Robust JSON parser — handles all the ways Gemini might format its response:
+    - Pure JSON
+    - JSON wrapped in ```json ... ```
+    - JSON wrapped in ``` ... ```
+    - JSON with explanation text before/after
+    - Slightly malformed JSON
+    """
+    if not raw_str:
+        return fallback_lr(filename, "Empty response from Gemini")
+
+    # Step 1 — strip markdown code fences (most common issue)
+    cleaned = raw_str.strip()
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"```\s*$",          "", cleaned, flags=re.MULTILINE)
+    cleaned = cleaned.strip()
+
+    # Step 2 — try direct parse first
+    try:
+        data = json.loads(cleaned)
+        return ensure_all_fields(data, filename)
+    except json.JSONDecodeError:
+        pass
+
+    # Step 3 — find the outermost { ... } block
+    try:
+        start = cleaned.index("{")
+        # find matching closing brace
+        depth = 0
+        end   = start
+        for i, ch in enumerate(cleaned[start:], start):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        json_str = cleaned[start:end + 1]
+        data = json.loads(json_str)
+        return ensure_all_fields(data, filename)
+    except (ValueError, json.JSONDecodeError):
+        pass
+
+    # Step 4 — fix common issues: trailing commas, single quotes
+    try:
+        fixed = re.sub(r",\s*([}\]])", r"", cleaned)   # trailing commas
+        fixed = re.sub(r"'([^']*)'", r'""', fixed)      # single → double quotes
+        start = fixed.index("{")
+        data  = json.loads(fixed[start:])
+        return ensure_all_fields(data, filename)
+    except Exception:
+        pass
+
+    # Step 5 — extract field by field using regex (last resort)
+    data = extract_fields_by_regex(cleaned, filename)
+    return data
+
+
+def ensure_all_fields(data: dict, filename: str) -> dict:
+    """Make sure all required fields exist with fallback values."""
+    required = {
+        "title":              filename.replace(".pdf", ""),
+        "authors":            "Not found in paper",
+        "year":               "—",
+        "journal_conference": "Not found in paper",
+        "objective":          "Not found in paper",
+        "contributions":      "Not found in paper",
+        "data_used":          "Not found in paper",
+        "model_used":         "Not found in paper",
+        "methodology":        ["Could not extract methodology steps"],
+        "key_findings":       "Not found in paper",
+        "strengths":          "Not found in paper",
+        "limitations_self":   "Not found in paper",
+        "limitations_llm":    "Not found in paper",
+        "future_work":        "Not found in paper",
+    }
+    for key, default in required.items():
+        if key not in data or not data[key] or data[key] == "":
+            data[key] = default
+    # Ensure methodology is always a list
+    if isinstance(data["methodology"], str):
+        steps = re.split(r"(?:Step\s*\d+[:\-–]|\d+[.\)]\s*)", data["methodology"])
+        data["methodology"] = [s.strip() for s in steps if s.strip()]
+        if not data["methodology"]:
+            data["methodology"] = [data["methodology"] if isinstance(data["methodology"], str) else "See paper"]
+    return data
+
+
+def extract_fields_by_regex(text: str, filename: str) -> dict:
+    """Extract individual fields using regex when full JSON parsing fails."""
+    def get_field(pattern):
+        m = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+        return m.group(1).strip() if m else "Not found in paper"
+
+    # Try to extract title, authors, year from the text
+    title   = get_field(r'"title"\s*:\s*"([^"]+)"')
+    authors = get_field(r'"authors"\s*:\s*"([^"]+)"')
+    year    = get_field(r'"year"\s*:\s*"([^"]+)"')
+    journal = get_field(r'"journal_conference"\s*:\s*"([^"]+)"')
+    obj     = get_field(r'"objective"\s*:\s*"([^"]+)"')
+    contrib = get_field(r'"contributions"\s*:\s*"([^"]+)"')
+    data_u  = get_field(r'"data_used"\s*:\s*"([^"]+)"')
+    model_u = get_field(r'"model_used"\s*:\s*"([^"]+)"')
+    findings= get_field(r'"key_findings"\s*:\s*"([^"]+)"')
+    strengths=get_field(r'"strengths"\s*:\s*"([^"]+)"')
+    lim_s   = get_field(r'"limitations_self"\s*:\s*"([^"]+)"')
+    lim_l   = get_field(r'"limitations_llm"\s*:\s*"([^"]+)"')
+    future  = get_field(r'"future_work"\s*:\s*"([^"]+)"')
+
+    # Extract methodology array
+    method_match = re.search(r'"methodology"\s*:\s*\[(.*?)\]', text, re.DOTALL)
+    if method_match:
+        steps_raw = method_match.group(1)
+        steps = re.findall(r'"([^"]+)"', steps_raw)
+        methodology = steps if steps else ["Could not extract steps"]
+    else:
+        methodology = ["Could not extract methodology steps"]
+
+    return {
+        "title": title if title != "Not found in paper" else filename.replace(".pdf",""),
+        "authors": authors, "year": year,
+        "journal_conference": journal, "objective": obj,
+        "contributions": contrib, "data_used": data_u,
+        "model_used": model_u, "methodology": methodology,
+        "key_findings": findings, "strengths": strengths,
+        "limitations_self": lim_s, "limitations_llm": lim_l,
+        "future_work": future,
+    }
+
+
+def fallback_lr(filename: str, reason: str) -> dict:
+    return {
+        "title": filename.replace(".pdf", ""),
+        "authors": "Click Generate LR Table again",
+        "year": "—", "journal_conference": "—",
+        "objective": f"Extraction failed: {reason}. Please click Generate LR Table again.",
+        "contributions": "—", "data_used": "—", "model_used": "—",
+        "methodology": ["Please click Generate LR Table again."],
+        "key_findings": "—", "strengths": "—",
+        "limitations_self": "—", "limitations_llm": "—", "future_work": "—",
+    }
 
 
 @app.get("/health")
