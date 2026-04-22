@@ -51,12 +51,13 @@ GEMINI_MODELS = [
 # ─────────────────────────────────────────────────────────────
 # Embeddings — free, local CPU
 # ─────────────────────────────────────────────────────────────
-def get_embeddings():
-    return HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2",
-        model_kwargs={"device": "cpu"},
-        encode_kwargs={"normalize_embeddings": True},
-    )
+print("[ResearchPal] Loading embedding model...")
+EMBEDDINGS = HuggingFaceEmbeddings(
+    model_name="sentence-transformers/all-MiniLM-L6-v2",
+    model_kwargs={"device": "cpu"},
+    encode_kwargs={"normalize_embeddings": True},
+)
+print("[ResearchPal] Embedding model ready.")
 
 # ─────────────────────────────────────────────────────────────
 # Gemini call — with model fallback + retry on 429 / 503
@@ -133,73 +134,84 @@ class GeminiLLM(LLM):
 # ═══════════════════════════════════════════════════════════════
 
 RAG_PROMPT_TEMPLATE = """You are ResearchPal — a world-class AI research assistant specializing in academic paper analysis. You have deep expertise in reading, interpreting, and explaining research papers across all scientific domains.
-
 RETRIEVED CONTEXT FROM THE PAPER:
 ---
 {context}
 ---
-
 CONVERSATION HISTORY:
 {chat_history}
-
 STRICT RULES:
 1. Answer ONLY using the context above. Never use outside knowledge.
-2. If the answer is not present say: "This specific information is not in the retrieved sections. Try rephrasing or asking about a different aspect."
-3. Always cite WHERE in the paper (e.g. "According to the methodology section..." or "The authors state in Section 4...").
-4. For technical concepts: explain WHAT it is, then HOW the paper uses it.
-5. Use bullet points or numbered lists for multi-part answers.
-6. Quote numbers, metrics, equations exactly as they appear.
-7. Match depth to question: concise for simple questions, thorough for complex ones.
-8. Maintain context from conversation history for follow-up questions.
-
+2. If the answer seems absent, look harder — limitations are often in the Discussion section, the last paragraphs, or phrased as "future work", "constraints", "our study has", "one limitation", "we acknowledge". Check every part of the context before saying it is not found.
+3. Only if truly absent say: "This specific information is not in the retrieved sections. Try asking: what does the discussion section say?"
+4. Always cite WHERE in the paper (e.g. "According to the methodology section..." or "The authors state in Section 4...").
+5. For technical concepts: explain WHAT it is, then HOW the paper uses it.
+6. Use bullet points or numbered lists for multi-part answers.
+7. Quote numbers, metrics, equations exactly as they appear.
+8. Match depth to question: concise for simple questions, thorough for complex ones.
+9. Maintain context from conversation history for follow-up questions.
 TONE: Expert but clear — like a senior researcher explaining to a peer.
-
 CURRENT QUESTION: {question}
 
+IMPORTANT — If the question is about limitations, future work, conclusion, or discussion:
+These are always in the LAST section of the paper. Look for phrases like "our study has", "we acknowledge", "one limitation", "future studies should", "further research", "in conclusion", "to summarize". Check every part of the retrieved context carefully including the last pages section if provided.
 ANSWER (structured, accurate, evidence-based):"""
 
-LR_EXTRACTION_PROMPT = """You are a senior academic researcher performing a literature review extraction. Read the full paper text carefully and extract ALL fields below. Every single field must be filled — do not skip any.
 
+# ── Prompt 1: Basic metadata — title authors year journal ──────
+LR_PROMPT_BASIC = """Read the research paper below very carefully.
+Your job: extract ONLY the basic bibliographic information.
+Return ONLY a raw JSON object — no markdown, no code fences, no explanation.
+Start with {{ and end with }}.
+PAPER TEXT (first section):
+{paper_text}
+Extract these fields exactly as they appear in the paper:
+{{
+  "title": "Copy the EXACT title word-for-word from the paper header or title page. Do not paraphrase or shorten it.",
+  "authors": "Copy ALL author names exactly as listed in the paper, comma separated. Include every author.",
+  "year": "The 4-digit publication year",
+  "journal_conference": "The exact journal or conference name where this was published"
+}}"""
+
+# ── Prompt 2: Deep content — everything else ──────────────────
+LR_PROMPT_CONTENT = """You are a senior academic peer reviewer. Read this research paper carefully.
+Return ONLY a raw JSON object — no markdown, no code fences, no explanation.
+Start with {{ and end with }}.
+CRITICAL: Every single field below MUST have real content from the paper.
+Never write "Not found" — dig deeper into the text to find each answer.
 PAPER TEXT:
 {paper_text}
-
-YOUR TASK:
-Read every section of the paper above — abstract, introduction, methods, results, discussion, conclusion, limitations — and extract information for every field. Do not say "not found" for fields that can be reasonably inferred from the paper.
-
-RULES:
-- Return ONLY a raw JSON object. No markdown. No ```json. No explanation. Just {{ and }}.
-- EVERY field must have real content extracted from the paper.
-- For model_used: look for CNN, transformer, ResNet, BERT, deep learning architecture names, loss functions, optimizers — any technical model detail.
-- For key_findings: look in Results and Discussion sections for AUC, accuracy, F1, precision, recall, p-values, percentages, comparisons to baselines.
-- For methodology: read the Methods section carefully and write 5 sequential steps of what the researchers actually did.
-- For strengths: think about what makes this paper valuable — large dataset, multi-center, clinical validation, novel approach, etc.
-- For limitations_self: read the Limitations or Discussion section for what authors say about their own weaknesses.
-- For limitations_llm: think critically as a peer reviewer — what did authors NOT mention? dataset bias, generalizability, class imbalance, lack of external validation, computational cost, etc.
-- For future_work: read the last paragraphs of Discussion/Conclusion.
-
-Return this JSON with ALL fields filled:
+Instructions per field:
+- objective: Read the abstract and introduction. What problem does this paper solve? What is the proposed method? Why does it matter? Write 2-3 sentences.
+- contributions: Read the introduction (usually a bulleted list "In this paper we...") and conclusion. List 4-5 numbered contributions.
+- data_used: Read the Methods/Data section. List every dataset name with patient/sample counts.
+- model_used: Read Methods carefully. List every model, architecture, algorithm mentioned: CNN, transformer, ResNet, MIL, attention, optimizer names, frameworks (PyTorch etc).
+- methodology: Read the entire Methods section. Write exactly 5 sequential steps describing what the researchers DID.
+- key_findings: Read Results AND Discussion sections. Find AUC values, accuracy numbers, p-values, comparison to baselines, number of cases. Write 4-5 specific findings with exact numbers.
+- strengths: What makes this paper good? Think: dataset size, multi-center, clinical validation, novelty, reproducibility. Write 3-4 specific strengths.
+- limitations_self: Read the Limitations section or end of Discussion. What do the AUTHORS say are their own limitations? Quote or closely paraphrase.
+- limitations_llm: As a critical reviewer, what weaknesses did authors NOT mention? Think: external validation, class imbalance, black-box interpretability, prospective study missing, computational cost, specific demographic biases. Write 4-5 you identify.
+- future_work: Read the last paragraphs. What future directions do authors suggest? Add 2 more you think are logical.
+Return this JSON with ALL fields filled with real content:
 {{
-  "title": "exact full title of the paper",
-  "authors": "all authors comma separated",
-  "year": "publication year",
-  "journal_conference": "journal or conference name",
-  "objective": "2-3 sentences: what problem does this paper solve, what is the proposed solution, and why does it matter clinically or scientifically",
-  "contributions": "1. first contribution. 2. second contribution. 3. third contribution. 4. fourth if exists.",
-  "data_used": "all datasets with patient/sample counts if mentioned",
-  "model_used": "list every model, architecture, algorithm, framework mentioned: e.g. CNN, ResNet, attention mechanism, PyTorch, etc.",
+  "objective": "2-3 sentences describing the problem, proposed solution, and clinical significance",
+  "contributions": "1. first contribution sentence. 2. second. 3. third. 4. fourth. 5. fifth if exists.",
+  "data_used": "all datasets with patient and sample counts",
+  "model_used": "every model architecture algorithm framework mentioned in the paper",
   "methodology": [
-    "Step 1 — Data Collection: describe exactly what data was collected and from where",
-    "Step 2 — Preprocessing: describe how slides or data were preprocessed",
-    "Step 3 — Model Architecture: describe the deep learning or ML model architecture used",
-    "Step 4 — Training: describe training procedure, loss function, optimizer, validation strategy",
-    "Step 5 — Evaluation and Clinical Application: describe how the model was evaluated and applied clinically"
+    "Step 1 — [name]: specific description of what was done",
+    "Step 2 — [name]: specific description",
+    "Step 3 — [name]: specific description",
+    "Step 4 — [name]: specific description",
+    "Step 5 — [name]: specific description"
   ],
-  "key_findings": "list 4-5 specific findings with numbers: AUC values, accuracy percentages, number of cases identified, comparison to baseline — use exact numbers from the paper",
-  "strengths": "1. Large and diverse multi-center dataset. 2. Clinical validation on real patients. 3. [add 2 more specific strengths from this paper]",
-  "limitations_self": "what the authors themselves said are limitations of their work in the limitations or discussion section",
-  "limitations_llm": "1. [limitation not mentioned by authors]. 2. [another limitation]. 3. [another]. 4. [another]. Think: generalizability, dataset bias, class imbalance, black-box nature, computational requirements, prospective validation missing, etc.",
-  "future_work": "what authors suggest for future work, plus 2 additional directions you suggest as a reviewer"
+  "key_findings": "4-5 specific results with exact numbers from the paper: AUC values, accuracy, number of cases identified, comparison improvements",
+  "strengths": "3-4 specific strengths with justification from this specific paper",
+  "limitations_self": "exact limitations the authors stated in their own words",
+  "limitations_llm": "1. limitation one. 2. limitation two. 3. limitation three. 4. limitation four. — limitations authors did NOT mention",
+  "future_work": "what authors suggest for future work, plus 2 additional directions you recommend"
 }}"""
+
 
 
 # ─────────────────────────────────────────────────────────────
@@ -221,7 +233,7 @@ def format_history(history: list) -> str:
     if not history:
         return "No previous conversation."
     lines = []
-    for turn in history[-6:]:   # last 6 turns = 12 messages max
+    for turn in history[-5:]:   # last 5 turns = 10 messages max
         lines.append(f"User: {turn['user']}")
         lines.append(f"Assistant: {turn['assistant']}")
     return "\n".join(lines)
@@ -229,7 +241,7 @@ def format_history(history: list) -> str:
 def retrieve_context(vectorstore, question: str, k: int = 6) -> tuple[str, list]:
     """MMR retrieval — diverse, non-redundant chunks."""
     docs = vectorstore.max_marginal_relevance_search(
-        question, k=k, fetch_k=20, lambda_mult=0.7
+        question, k=k, fetch_k=30, lambda_mult=0.7
     )
     context = "\n\n---\n\n".join(
         f"[Page {d.metadata.get('page', 0) + 1}]\n{d.page_content}" for d in docs
@@ -352,8 +364,8 @@ async def upload_pdf(file: UploadFile = File(...)):
     chunks = splitter.split_documents(pages)
 
     # Embed (local, free, CPU)
-    embeddings = get_embeddings()
-    vectorstore = FAISS.from_documents(chunks, embeddings)
+    vectorstore = await asyncio.to_thread(
+    FAISS.from_documents, chunks, EMBEDDINGS)
 
     # Store session — NO LangChain chain, just the vectorstore + plain history list
     SESSIONS[session_id] = {
@@ -413,16 +425,37 @@ async def lr_table(req: LRRequest):
     session  = SESSIONS[req.session_id]
     raw_text = session["raw_text"]
 
-    # Smart context: send full paper but prioritize key sections
-    # Gemini 2.5 flash handles up to 1M tokens — send as much as possible
-    context = smart_paper_context(raw_text, max_chars=40000)
-    prompt  = LR_EXTRACTION_PROMPT.format(paper_text=context)
+    # Call 1 — basic metadata from first 3000 chars (title/authors always at top)
+    first_section = clean_text(raw_text[:8000], max_chars=8000)
+    prompt_basic  = LR_PROMPT_BASIC.format(paper_text=first_section)
+    raw_basic     = await asyncio.to_thread(call_gemini, prompt_basic, 0.0, 2048)
+    basic_data    = parse_lr_response(raw_basic, session["filename"])
 
-    # Use temperature 0 for maximum determinism and JSON compliance
-    raw_str = await asyncio.to_thread(call_gemini, prompt, 0.0, 4096)
+    # Call 2 — deep content from smart context (methods/results/discussion)
+    full_context    = smart_paper_context(raw_text, max_chars=40000)
+    prompt_content  = LR_PROMPT_CONTENT.format(paper_text=full_context)
+    raw_content     = await asyncio.to_thread(call_gemini, prompt_content, 0.0, 4096)
+    content_data    = parse_lr_response(raw_content, session["filename"])
 
-    data = parse_lr_response(raw_str, session["filename"])
-    return data
+    # Merge: basic_data provides title/authors/year/journal
+    #        content_data provides everything else
+    merged = {
+        "title":              basic_data.get("title", session["filename"].replace(".pdf","")),
+        "authors":            basic_data.get("authors", "See paper"),
+        "year":               basic_data.get("year", "—"),
+        "journal_conference": basic_data.get("journal_conference", "—"),
+        "objective":          content_data.get("objective", "—"),
+        "contributions":      content_data.get("contributions", "—"),
+        "data_used":          content_data.get("data_used", "—"),
+        "model_used":         content_data.get("model_used", "—"),
+        "methodology":        content_data.get("methodology", ["—"]),
+        "key_findings":       content_data.get("key_findings", "—"),
+        "strengths":          content_data.get("strengths", "—"),
+        "limitations_self":   content_data.get("limitations_self", "—"),
+        "limitations_llm":    content_data.get("limitations_llm", "—"),
+        "future_work":        content_data.get("future_work", "—"),
+    }
+    return merged
 
 
 def parse_lr_response(raw_str: str, filename: str) -> dict:
