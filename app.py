@@ -62,7 +62,7 @@ print("[ResearchPal] Embedding model ready.")
 # ─────────────────────────────────────────────────────────────
 # Gemini call — with model fallback + retry on 429 / 503
 # ─────────────────────────────────────────────────────────────
-def call_gemini(prompt: str, temperature: float = 0.2, max_tokens: int = 2048) -> str:
+def call_gemini(prompt: str, temperature: float = 0.2, max_tokens: int = 8192) -> str:
     if not GEMINI_API_KEY:
         raise HTTPException(500, "GEMINI_API_KEY not set. Create a .env file with your key.")
 
@@ -237,7 +237,6 @@ STRICT RULES:
 9. Maintain context from conversation history for follow-up questions.
 TONE: Expert but clear — like a senior researcher explaining to a peer.
 CURRENT QUESTION: {question}
-
 IMPORTANT — If the question is about limitations, future work, conclusion, or discussion:
 These are always in the LAST section of the paper. Look for phrases like "our study has", "we acknowledge", "one limitation", "future studies should", "further research", "in conclusion", "to summarize". Check every part of the retrieved context carefully including the last pages section if provided.
 ANSWER (structured, accurate, evidence-based):"""
@@ -571,7 +570,7 @@ async def lr_table(req: LRRequest):
     # Call 2 — deep content from smart context (methods/results/discussion)
     full_context    = smart_paper_context(raw_text, max_chars=40000)
     prompt_content  = LR_PROMPT_CONTENT.format(paper_text=full_context)
-    raw_content     = await asyncio.to_thread(call_gemini, prompt_content, 0.0, 4096)
+    raw_content = await asyncio.to_thread(call_gemini, prompt_content, 0.0, 8192)
     content_data    = parse_lr_response(raw_content, session["filename"])
 
     # Merge: basic_data provides title/authors/year/journal
