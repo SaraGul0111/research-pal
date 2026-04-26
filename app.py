@@ -8,11 +8,11 @@ import uuid
 import asyncio
 import time
 from pathlib import Path
-from typing import Optional, List, Any
+from typing import Optional, List, Any, AsyncIterator
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -81,7 +81,7 @@ def call_gemini(prompt: str, temperature: float = 0.2, max_tokens: int = 2048) -
                         candidate_count=1,
                     ),
                 )
-                return response.text  # ✓ success
+                return response.text  # success
 
             except Exception as e:
                 last_error = e
@@ -109,6 +109,91 @@ def call_gemini(prompt: str, temperature: float = 0.2, max_tokens: int = 2048) -
 
     raise HTTPException(503,
         "Gemini is experiencing high demand. Please wait 30 seconds and try again.")
+
+
+async def stream_gemini_chunks(
+    prompt: str, temperature: float, max_tokens: int
+) -> AsyncIterator[str]:
+    """Async text deltas from Gemini — same model fallback / retries as call_gemini."""
+    if not GEMINI_API_KEY:
+        raise HTTPException(500, "GEMINI_API_KEY not set. Create a .env file with your key.")
+
+    client = genai.Client(api_key=GEMINI_API_KEY)
+
+    for model in GEMINI_MODELS:
+        for attempt in range(3):
+            try:
+                async for chunk in await client.aio.models.generate_content_stream(
+                    model=model,
+                    contents=prompt,
+                    config=genai_types.GenerateContentConfig(
+                        temperature=temperature,
+                        max_output_tokens=max_tokens,
+                        candidate_count=1,
+                    ),
+                ):
+                    t = getattr(chunk, "text", None) or ""
+                    if t:
+                        yield t
+                return
+            except HTTPException:
+                raise
+            except Exception as e:
+                err = str(e)
+
+                if "429" in err or "RESOURCE_EXHAUSTED" in err:
+                    if "PerDay" in err or "limit: 0" in err:
+                        print(f"[ResearchPal] Daily quota done for {model}, next model...")
+                        break
+                    wait = (2 ** attempt) * 12
+                    print(f"[ResearchPal] Rate limited ({model}), wait {wait}s...")
+                    await asyncio.sleep(wait)
+
+                elif "503" in err or "UNAVAILABLE" in err or "high demand" in err.lower():
+                    wait = (2 ** attempt) * 8
+                    print(f"[ResearchPal] {model} overloaded, wait {wait}s...")
+                    await asyncio.sleep(wait)
+
+                elif "404" in err or "not found" in err.lower() or "MODEL_NOT_FOUND" in err:
+                    print(f"[ResearchPal] {model} not available, next model...")
+                    break
+
+                else:
+                    raise HTTPException(500, f"Gemini error: {err[:250]}")
+
+    raise HTTPException(
+        503,
+        "Gemini is experiencing high demand. Please wait 30 seconds and try again.",
+    )
+
+
+def _sse_bytes(payload: dict) -> bytes:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
+
+
+def _fragment_text_for_sse(text: str, max_piece: int = 20) -> List[str]:
+    """
+    Split a Gemini delta into small pieces. The API often emits large chunks
+    (or one chunk at EOF); smaller SSE frames + asyncio.sleep(0) let uvicorn
+    flush so the client can paint incrementally.
+    """
+    if not text:
+        return []
+    if len(text) <= max_piece:
+        return [text]
+    out: List[str] = []
+    pos = 0
+    while pos < len(text):
+        end = min(pos + max_piece, len(text))
+        chunk = text[pos:end]
+        if end < len(text) and chunk and not chunk[-1].isspace():
+            cut = chunk.rfind(" ")
+            if cut > max_piece // 3:
+                chunk = chunk[: cut + 1]
+                end = pos + len(chunk)
+        out.append(chunk)
+        pos = end if chunk else pos + 1
+    return out if out else [text]
 
 
 # ─────────────────────────────────────────────────────────────
@@ -415,6 +500,58 @@ async def chat(req: ChatRequest):
         history.pop(0)
 
     return {"answer": answer, "sources": sources[:4]}
+
+
+@app.post("/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """RAG chat with Server-Sent Events: metadata first, then text chunks, then done."""
+    if not GEMINI_API_KEY:
+        raise HTTPException(500, "GEMINI_API_KEY not configured. Create a .env file.")
+    if req.session_id not in SESSIONS:
+        raise HTTPException(404, "Session not found. Please upload a PDF first.")
+
+    session = SESSIONS[req.session_id]
+    vectorstore = session["vectorstore"]
+    history = session["history"]
+
+    context, sources = await asyncio.to_thread(
+        retrieve_context, vectorstore, req.message, 6
+    )
+    prompt = RAG_PROMPT_TEMPLATE.format(
+        context=context,
+        chat_history=format_history(history),
+        question=req.message,
+    )
+
+    async def event_gen():
+        try:
+            yield _sse_bytes({"sources": sources[:4]})
+            pieces: List[str] = []
+            async for delta in stream_gemini_chunks(prompt, 0.2, 2048):
+                for piece in _fragment_text_for_sse(delta):
+                    pieces.append(piece)
+                    yield _sse_bytes({"text": piece})
+                    await asyncio.sleep(0)
+            answer = "".join(pieces)
+            history.append({"user": req.message, "assistant": answer})
+            if len(history) > 20:
+                history.pop(0)
+            yield _sse_bytes({"done": True})
+        except HTTPException as e:
+            d = e.detail
+            yield _sse_bytes({"error": d if isinstance(d, str) else str(d)})
+        except Exception as e:
+            yield _sse_bytes({"error": str(e)[:500]})
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/lr-table")
